@@ -1,65 +1,90 @@
+import os
 import requests
-import time
-import os
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-def send(msg):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    requests.post(url,data={"chat_id":CHAT_ID,"text":msg})
-
-def strategy(price):
-    if price > 25650:
-        return "BUY CE 🚀"
-    elif price < 25550:
-        return "BUY PE 🔻"
-    else:
-        return "NO TRADE ⏳"
-
-while True:
+# ---------- NIFTY DATA ----------
+def get_nifty_price():
     try:
-        r = requests.get("https://api.indiaapi.in/stock/NIFTY")
-        data = r.json()
-        price = float(data["ltp"])
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI"
+        data = requests.get(url, timeout=5).json()
+        price = data['chart']['result'][0]['meta']['regularMarketPrice']
+        prev = data['chart']['result'][0]['meta']['chartPreviousClose']
+        change = price - prev
+        return price, change
+    except:
+        return None, None
 
-        signal = strategy(price)
-        send(f"NIFTY: {price} -> {signal}")
 
-        time.sleep(60)
+# ---------- SIGNAL ENGINE ----------
+def generate_signal(price, change):
 
-    except Exception as e:
-        send("Error: "+str(e))
-        time.sleep(60)import requests
-import time
-import os
+    atm = round(price / 50) * 50
 
-TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-
-def send(msg):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    requests.post(url,data={"chat_id":CHAT_ID,"text":msg})
-
-def strategy(price):
-    if price > 25650:
-        return "BUY CE 🚀"
-    elif price < 25550:
-        return "BUY PE 🔻"
+    # Trend
+    if change > 40:
+        trend = "UP"
+    elif change < -40:
+        trend = "DOWN"
     else:
-        return "NO TRADE ⏳"
+        trend = "SIDE"
 
-while True:
-    try:
-        r = requests.get("https://api.indiaapi.in/stock/NIFTY")
-        data = r.json()
-        price = float(data["ltp"])
+    # Momentum (fake breakout logic)
+    if abs(change) > 70:
+        momentum = "STRONG"
+    elif abs(change) > 25:
+        momentum = "MEDIUM"
+    else:
+        momentum = "WEAK"
 
-        signal = strategy(price)
-        send(f"NIFTY: {price} -> {signal}")
+    # Decision
+    if trend == "UP" and momentum == "STRONG":
+        return f"🟢 STRONG BUY CE\nStrike: {atm}\nSL: -20pts\nTarget: +40pts\nValid: 10 min"
 
-        time.sleep(60)
+    if trend == "UP":
+        return f"🟢 BUY CE\nStrike: {atm}\nSL: -15pts\nTarget: +25pts\nValid: 10 min"
 
-    except Exception as e:
-        send("Error: "+str(e))
-        time.sleep(60)
+    if trend == "DOWN" and momentum == "STRONG":
+        return f"🔴 STRONG BUY PE\nStrike: {atm}\nSL: -20pts\nTarget: +40pts\nValid: 10 min"
+
+    if trend == "DOWN":
+        return f"🔴 BUY PE\nStrike: {atm}\nSL: -15pts\nTarget: +25pts\nValid: 10 min"
+
+    return "⚪ NO TRADE — Market sideways"
+
+
+# ---------- COMMANDS ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 NIFTY PRO BOT READY\n\n"
+        "/nifty - Live price\n"
+        "/signal - Trade signal"
+    )
+
+async def nifty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    price, change = get_nifty_price()
+    if price:
+        await update.message.reply_text(f"📊 NIFTY: {price}\nChange: {round(change,2)}")
+    else:
+        await update.message.reply_text("Market data error")
+
+async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    price, change = get_nifty_price()
+    if price:
+        msg = generate_signal(price, change)
+        await update.message.reply_text(msg)
+    else:
+        await update.message.reply_text("Signal unavailable")
+
+
+# ---------- RUN ----------
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("nifty", nifty))
+app.add_handler(CommandHandler("signal", signal))
+
+print("Bot running...")
+app.run_polling()
